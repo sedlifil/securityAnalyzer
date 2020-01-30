@@ -113,27 +113,21 @@ public class Analyzer {
     public void analyzeApplicationSecurity() {
         filesFromPathList = fileHandler.getAllFilesFromPAth(sourcePathOfApplication);
 
+        logger.info("Find controllers...");
         controllerContainerList = findControllersByAnnotation();
 
         // change interface component field variables into their implementation (into class component)
         // class component field variables remain same
         controllerContainerList.forEach(this::setClassContainerFromField);
 
-        // todo jen jedna trida -> pozdeji smazat
-//        createGraphOfSubMethodsForClassComponent(controllerContainerList.get(0));
-
-        // todo odkomentovat
+        logger.info("Creating graph of sub methods...");
         createGraphOfSubMethodsForControllers();
 
-//        printAllInterfacesOrClassNamesWithMethods();
-
-
+        logger.info("Finding security inconsistency...");
         traverseCriticalMethods();
 
+        logger.info("Saving security inconsistency comments to files...");
         saveSuggestedAnnotationsToFile();
-
-        printAllControllerClassNamesWithCriticalMethods();
-
 
     }
 
@@ -375,7 +369,7 @@ public class Analyzer {
                         return createComponentMethodNode(methodDeclaration, methodDeclaration.getNameAsString(), component, parent, isMethodCritical(methodDeclaration.getNameAsString(), component));
                     }
                 } catch (UnsolvedSymbolException e) {
-                    logger.warn("UnsolvedSymbolException " + methodDeclaration.getNameAsString() + " was not solved by JavaSymboler.");
+//                    logger.warn("UnsolvedSymbolException " + methodDeclaration.getNameAsString() + " was not solved by JavaSymboler.");
                 }
             }
         }
