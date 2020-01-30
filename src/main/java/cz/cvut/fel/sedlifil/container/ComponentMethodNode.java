@@ -3,10 +3,7 @@ package cz.cvut.fel.sedlifil.container;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import edu.baylor.ecs.jparser.component.Component;
 
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 public class ComponentMethodNode {
 
@@ -16,7 +13,9 @@ public class ComponentMethodNode {
     private Set<ComponentMethodNode> parentComponentMethodNodeList;
     private List<ComponentMethodNode> subMethods;
     private final boolean criticalMethod;
-    private Set<String> roles;
+    private Map<String, SecurityAnnotation> securityAnnotationMap;
+    private Map<String, SecurityAnnotation> parentSecurityAnnotationMap;
+    private Map<String, SecurityAnnotation> securityAnnotationSuggestionMap;
 
 
     public ComponentMethodNode(MethodDeclaration methodDeclaration, String methodName, Component classComponent, Set<ComponentMethodNode> parentComponentMethodNodeList, boolean criticalMethod) {
@@ -25,8 +24,10 @@ public class ComponentMethodNode {
         this.classComponent = classComponent;
         this.parentComponentMethodNodeList = parentComponentMethodNodeList;
         this.criticalMethod = criticalMethod;
-        subMethods = new ArrayList<>();
-        roles = new HashSet<>();
+        this.subMethods = new ArrayList<>();
+        securityAnnotationMap = new HashMap<>();
+        parentSecurityAnnotationMap = new HashMap<>();
+        securityAnnotationSuggestionMap = new HashMap<>();
     }
 
     public ComponentMethodNode(MethodDeclaration methodDeclaration, String methodName, Component classComponent, ComponentMethodNode componentMethodNode, boolean criticalMethod) {
@@ -37,7 +38,9 @@ public class ComponentMethodNode {
         this.parentComponentMethodNodeList.add(componentMethodNode);
         this.criticalMethod = criticalMethod;
         subMethods = new ArrayList<>();
-        roles = new HashSet<>();
+        securityAnnotationMap = new HashMap<>();
+        parentSecurityAnnotationMap = new HashMap<>();
+        securityAnnotationSuggestionMap = new HashMap<>();
     }
 
     public ComponentMethodNode(MethodDeclaration methodDeclaration, String methodName, Component classComponent, boolean criticalMethod) {
@@ -47,7 +50,9 @@ public class ComponentMethodNode {
         this.parentComponentMethodNodeList = new HashSet<>();
         this.criticalMethod = criticalMethod;
         subMethods = new ArrayList<>();
-        roles = new HashSet<>();
+        securityAnnotationMap = new HashMap<>();
+        parentSecurityAnnotationMap = new HashMap<>();
+        securityAnnotationSuggestionMap = new HashMap<>();
     }
 
     public MethodDeclaration getMethodDeclaration() {
@@ -86,15 +91,36 @@ public class ComponentMethodNode {
         parentComponentMethodNodeList.add(classComponent);
     }
 
-    public Set<String> getRoles() {
-        return roles;
+    public Map<String, SecurityAnnotation> getSecurityAnnotationMap() {
+        return securityAnnotationMap;
     }
 
-    public void setRoles(Set<String> roles) {
-        this.roles = roles;
+    public void setSecurityAnnotationMap(Map<String, SecurityAnnotation> securityAnnotationMap) {
+        this.securityAnnotationMap = securityAnnotationMap;
     }
 
-    public void addRole(String role) {
-        roles.add(role);
+    public Map<String, SecurityAnnotation> getParentSecurityAnnotationMap() {
+        return parentSecurityAnnotationMap;
     }
+
+    public void setParentSecurityAnnotationMap(Map<String, SecurityAnnotation> parentSecurityAnnotationMap) {
+        this.parentSecurityAnnotationMap = parentSecurityAnnotationMap;
+    }
+
+    public void addSecurityAnnotation(SecurityAnnotation securityAnnotation){
+        securityAnnotationMap.put(securityAnnotation.getAnnotation(), securityAnnotation);
+    }
+    public void addParentSecurityAnnotation(SecurityAnnotation securityAnnotation){
+        if(!parentSecurityAnnotationMap.containsKey(securityAnnotation.getAnnotation()))
+            parentSecurityAnnotationMap.put(securityAnnotation.getAnnotation(), securityAnnotation);
+    }
+
+    public Map<String, SecurityAnnotation> getSecurityAnnotationSuggestionMap() {
+        return securityAnnotationSuggestionMap;
+    }
+
+    public void addSecurityAnnotationSuggestion(SecurityAnnotation securityAnnotationSuggestion) {
+        this.securityAnnotationSuggestionMap.put(securityAnnotationSuggestion.getAnnotation(), securityAnnotationSuggestion);
+    }
+
 }

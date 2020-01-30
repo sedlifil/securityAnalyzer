@@ -3,6 +3,7 @@ package cz.cvut.fel.sedlifil.analyzer;
 import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.MethodDeclaration;
+import com.github.javaparser.ast.comments.BlockComment;
 import com.github.javaparser.ast.comments.Comment;
 import com.github.javaparser.ast.expr.AnnotationExpr;
 import com.github.javaparser.ast.expr.MemberValuePair;
@@ -18,6 +19,7 @@ import com.github.javaparser.symbolsolver.resolution.typesolvers.JavaParserTypeS
 import com.github.javaparser.symbolsolver.resolution.typesolvers.ReflectionTypeSolver;
 import cz.cvut.fel.sedlifil.container.ComponentMethodNode;
 import cz.cvut.fel.sedlifil.container.ControllerContainer;
+import cz.cvut.fel.sedlifil.container.SecurityAnnotation;
 import cz.cvut.fel.sedlifil.fileHandler.IFileHandler;
 import cz.cvut.fel.sedlifil.visitor.Visitor;
 import edu.baylor.ecs.jparser.component.Component;
@@ -25,8 +27,6 @@ import edu.baylor.ecs.jparser.component.context.AnalysisContext;
 import edu.baylor.ecs.jparser.component.impl.ClassComponent;
 import edu.baylor.ecs.jparser.component.impl.FieldComponent;
 import edu.baylor.ecs.jparser.component.impl.MethodInfoComponent;
-import edu.baylor.ecs.jparser.component.impl.ModuleComponent;
-import edu.baylor.ecs.jparser.factory.container.impl.ModuleComponentFactory;
 import edu.baylor.ecs.jparser.factory.context.AnalysisContextFactory;
 import edu.baylor.ecs.jparser.factory.directory.DirectoryFactory;
 import edu.baylor.ecs.jparser.model.AnnotationValuePair;
@@ -38,6 +38,9 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import static cz.cvut.fel.sedlifil.helper.Constants.*;
@@ -56,47 +59,32 @@ public class Analyzer {
     private Set<ComponentMethodNode> componentMethodNodeOfTreeSet;
 
     private List<ControllerContainer> controllerContainerList;
+    private Set<ComponentMethodNode> inconsistentComponentMethodMap;
 
 
-    public Analyzer(IFileHandler fileHandler, String sourcePathOfApplication) throws FileNotFoundException {
+    public Analyzer(IFileHandler fileHandler, String sourcePathOfApplication, String rootPathOfPackageApplication) throws FileNotFoundException {
         this.fileHandler = fileHandler;
         this.sourcePathOfApplication = sourcePathOfApplication;
         containerClassCUList = new ArrayList<>();
         criticalAnnotationSet = new HashSet<>();
         componentMethodNodeOfTreeSet = new HashSet<>();
+        inconsistentComponentMethodMap = new HashSet<>();
 
 
         DirectoryFactory directoryFactory = new DirectoryFactory();
         AnalysisContextFactory analysisFactory = new AnalysisContextFactory();
 
-// Creates a directory graph from the DirectoryFactory from a string path to the directory in question.
-        Component directoryGraph = directoryFactory.createDirectoryGraph("/Users/filip/Dropbox/palmTourism/palmTourism/src");
-
-        directoryGraph.getSubComponents().forEach(sub -> {
-            System.out.println(sub.getInstanceName());
-        });
-
-//
-        ModuleComponentFactory moduleFactory = ModuleComponentFactory.getInstance();
-        ModuleComponent moduleGraph = moduleFactory.createComponent(null, directoryGraph);
+        // Creates a directory graph from the DirectoryFactory from a string path to the directory in question.
+        Component directoryGraph = directoryFactory.createDirectoryGraph(sourcePathOfApplication);
 
 
-//
-//        // Lastly, create the full AnalysisContext object as such:
         analysisContext = analysisFactory.createAnalysisContextFromDirectoryGraph(directoryGraph);
-//        analysisContext.getMethods().forEach(m -> {
-//            System.out.println(m.asMethodInfoComponent().getId() + " -> " + m.asMethodInfoComponent().getMethodName() + " - " + m.asMethodInfoComponent().getParent().asClassComponent().getClassName());
-//            m.asMethodInfoComponent().getSubMethods().forEach(submet -> {
-//                System.out.println("\t" + submet.getId() + " -> " + submet);
-//            });
-//        });
-
 
         // set Java SymbolSolver
         try {
             TypeSolver myTypeSolver = new CombinedTypeSolver(
                     new ReflectionTypeSolver(), JarTypeSolver.getJarTypeSolver("/Users/filip/Dropbox/palmTourism/palmTourism/target/palmTourism-0.0.1-SNAPSHOT.jar"),
-                    new JavaParserTypeSolver(new File("/Users/filip/Dropbox/palmTourism/palmTourism/src/main/java")));
+                    new JavaParserTypeSolver(new File(rootPathOfPackageApplication)));
 
             JavaSymbolSolver symbolSolver = new JavaSymbolSolver(myTypeSolver);
             StaticJavaParser
@@ -104,29 +92,19 @@ public class Analyzer {
                     .setSymbolResolver(symbolSolver);
 
         } catch (IOException e) {
-            e.printStackTrace();
+            logger.error("Second parameter is incorrect.");
+            System.exit(2);
         }
 
         // for each class or interface component set new compilation unit with Java SymbolSolver
-        System.out.println("CLASS -> METHOD -> PARAMETERS");
         for (Component _component : analysisContext.getClassesAndInterfaces()) {
-            System.out.println();
             if (_component.asInterfaceComponent() != null) {
                 CompilationUnit cu = StaticJavaParser.parse(new File(_component.asInterfaceComponent().getPath()));
                 _component.asInterfaceComponent().setCompilationUnit(cu);
-//                _component.asInterfaceComponent().getMethods().forEach(method -> {
-//                    System.out.println(_component.asInterfaceComponent().getContainerName() + " x-> " + method.asMethodInfoComponent().getMethodName() + " - " + method.asMethodInfoComponent().getMethodParams());
-//                });
             } else {
                 CompilationUnit cu = StaticJavaParser.parse(new File(_component.asClassComponent().getPath()));
                 _component.asClassComponent().setCompilationUnit(cu);
-
-//                _component.asClassComponent().getMethods().forEach(method -> {
-//                    System.out.println(_component.asClassComponent().getClassName() + " -> " + method.asMethodInfoComponent().getMethodName() + " - " + method.asMethodInfoComponent().getMethodParams());
-//                });
             }
-
-
         }
 
     }
@@ -135,39 +113,24 @@ public class Analyzer {
     public void analyzeApplicationSecurity() {
         filesFromPathList = fileHandler.getAllFilesFromPAth(sourcePathOfApplication);
 
-//        loadAllJavaClassesFromFiles();
-//
-//        printAllClassAnnotations();
-
-//        jparserDirectory();
-
-//        getAllClasses();
-
-
         controllerContainerList = findControllersByAnnotation();
-
-        // fill in controller container with critical methods
-//        controllerContainerList.forEach(this::getAllCriticalMethod); // todo pouzit nekde critical methods
 
         // change interface component field variables into their implementation (into class component)
         // class component field variables remain same
         controllerContainerList.forEach(this::setClassContainerFromField);
 
-
         // todo jen jedna trida -> pozdeji smazat
-//        createTreeOfSubMethodsForClassComponent(controllerContainerList.get(0));
+//        createGraphOfSubMethodsForClassComponent(controllerContainerList.get(0));
 
         // todo odkomentovat
-        createTreeOfSubMethodsForControllers();
+        createGraphOfSubMethodsForControllers();
 
 //        printAllInterfacesOrClassNamesWithMethods();
 
-//        try {
-//            addComment(controllerList.get(0), "getAllCarPlates", new BlockComment("TODO ANALYZER"));
-//        } catch (IOException e) {
-//            // TODO DODELAT NEJAKY EXCEPTION
-//            e.printStackTrace();
-//        }
+
+        traverseCriticalMethods();
+
+        saveSuggestedAnnotationsToFile();
 
         printAllControllerClassNamesWithCriticalMethods();
 
@@ -175,127 +138,19 @@ public class Analyzer {
     }
 
 
-    private void loadAllJavaClassesFromFiles() {
-        filesFromPathList.forEach(path -> {
-            try {
-                ContainerClassCU containerClassCU = new ContainerClassCU(path);
-                containerClassCUList.add(containerClassCU);
-            } catch (FileNotFoundException e) {
-                logger.error("Error: can not open file " + path);
-                logger.info("JavaParser ends with error status.");
-                System.exit(13);
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-
-        });
-    }
-
-
-    private void jparserDirectory() {
-        // Create the directory factory, uses default constructor and sets the language type to "Java" by default
-
-//        analysisContext.getClassNames().forEach(className -> {
-//            Component component = analysisContext.getClassByName(className);
-//            System.out.println("CLASS = " + component.getInstanceName());
-//            System.out.print("parent :");
-//            if (component.getParent() != null) {
-//                System.out.println(component.getParent());
-//            }
-
-//            component.asClassComponent().getMethods().forEach(method -> {
-//                System.out.println("\t" + method.asMethodInfoComponent().getMethodName());
-//                System.out.print("ANNOTATIONS: ");
-//                method.asMethodInfoComponent().getAnnotations().forEach(ann -> System.out.print("\t" + ann.asAnnotationComponent().getAsString() + ", "));
-//                System.out.println();
-//            });
-//        });
-    }
-
-    // todo jen pro zkouseni
-    private void getAllClasses() {
-        System.out.println(" ALL CLASSES");
-        analysisContext.getClassesAndInterfaces().forEach(component -> {
-
-            System.out.print("CLASS = " + component.getInstanceType() + "-" + component.getInstanceName());
-            System.out.print(", parent :");
-            if (component.getParent() != null) {
-                System.out.println(component.getParent().getInstanceName());
-            } else
-                System.out.println();
-
-        });
-    }
-
     /**
-     * for all found Controllers create their sub methods tree
+     * for all controllers create their sub methods graph
      */
-    private void createTreeOfSubMethodsForControllers() {
-        // TODO ZMENIT
-        controllerContainerList.forEach(controllerContainer -> {
-//            if(controllerContainer.getClassComponent().asClassComponent().getClassName().equals("FDocumentController"))
-            createTreeOfSubMethodsForClassComponent(controllerContainer);
-        });
-//        createTreeOfSubMethodsForClassComponent(controllerContainerList.get(0));
+    private void createGraphOfSubMethodsForControllers() {
+        controllerContainerList.forEach(this::createGraphOfSubMethodsForClassComponent);
     }
 
 
-    private void createTreeOfSubMethodsForClassComponent(ControllerContainer controllerContainer) {
-        System.out.println("\n\n\n");
-        System.out.println("createTreeOfSubMethodsForClassComponent");
-        System.out.println(controllerContainer.getClassComponent().asClassComponent().getClassName());
-//        methodComponent.getMethodParams().forEach(methodParamComponent -> System.out.println(methodParamComponent.getParameterName() + " -> " + methodParamComponent.getParameterType()));
-//        System.out.println(methodComponent);
-
-//        System.out.println(methodComponent.getRawSource());
-//        System.out.println(methodComponent.getRawSourceStripped().size());
-//        methodComponent.getRawSourceStripped().forEach(strip -> System.out.println(strip));
-
-//        for (MethodInfoComponent subMethod : methodComponent.getSubMethods()) {
-//            System.out.println("\t\t" + subMethod.getId() + " -> " + subMethod.getMethodName() + subMethod);
-//        }
-
-
-//        List<MethodCallExpr> methodCallExprList2 = new ArrayList<>();
-//
-//        controllerContainer.getClassComponent().asClassComponent().getCompilationUnit().findAll(MethodDeclaration.class).forEach(ae -> {
-////                ResolvedType resolvedType = ae.calculateResolvedType();
-//            System.out.println(ae.toString() + " is a: " + ae.getParameters().size());
-//            ae.getParameters().forEach(argument -> {
-//                System.out.println("\t" + argument.getType());
-//            });
-//
-//            ae.accept(new Visitor.MethodCallVisitor(), methodCallExprList2);
-//            methodCallExprList2.forEach(methodCallExpr -> {
-//                System.out.println(methodCallExpr.getScope() + "->" + methodCallExpr.getName() + methodCallExpr.getArguments().size());
-//                if (!methodCallExpr.getScope().get().toString().contains("LOGGER")) {
-//                    methodCallExpr.resolve();
-//
-//                }
-//
-//            });
-//            methodCallExprList2.clear();
-//        });
-
-//            cu.findAll(MethodCallExpr.class).forEach(ae -> {
-////                ResolvedType resolvedType = ae.calculateResolvedType();
-//                System.out.println(ae.toString() + " is a: " + ae.getParentNode().get());
-//                ae.getArguments().forEach(argument -> {
-//                    System.out.println("\t" + argument);
-//                });
-//                if (!ae.getScope().get().toString().contains("Logger") && !ae.getScope().get().toString().contains("LOGGER")) {
-//                    System.out.println("AE = " + ae.resolve().getQualifiedSignature());
-//                }
-//            });
-
-//        controllerContainer.getCriticalMethods().forEach(method -> {
-//            System.out.println(method.getMethodDeclaration().getNameAsString());
-//        });
-
+    private void createGraphOfSubMethodsForClassComponent(ControllerContainer controllerContainer) {
 
         // evaluate critical methods
-
         evaluateCriticalMethods(controllerContainer);
+
         //for each critical method find sub methods
         for (ComponentMethodNode componentMethodNode : controllerContainer.getCriticalMethods()) {
             findAndSetSubMethodsForComponentMethodNode(componentMethodNode);
@@ -303,68 +158,17 @@ public class Analyzer {
 
         controllerContainer.getCriticalMethods().forEach(ctiricalMethod -> {
             ctiricalMethod.getSubMethods().forEach(subMethod -> {
-                createTreeOfSubMethodsForComponentMethodNode(subMethod);
+                createGraphOfSubMethodsForComponentMethodNode(subMethod);
             });
         });
-
-//        System.out.println("=============================");
-//        controllerContainer.getCriticalMethods().forEach(criticalMethod -> {
-//            System.out.println(criticalMethod.getMethodDeclaration().getNameAsString());
-//            criticalMethod.getSubMethods().forEach(subMethod -> {
-//                System.out.println("\t" + subMethod.getMethodDeclaration().getNameAsString());
-//            });
-//        });
-//        System.out.println("=============================");
-
-
-        // for each critical method find subMethods  -> OLD IMPLEMENTATION WHEN controller container had critical method as methodComponent
-//        for (MethodDeclaration method : controllerContainer.getClassComponent().asClassComponent().getCompilationUnit().findAll(MethodDeclaration.class)) {
-//            if (controllerContainer.getCriticalMethods()
-//                    .stream()
-//                    .map(critM -> critM.getMethodDeclaration().asMethodInfoComponent().getMethodName()).collect(Collectors.toList()).contains(method.getNameAsString())) {
-//                System.out.print("Method = " + method.resolve().getQualifiedSignature() + ", params = ");
-//                for (int i = 0; i < method.getParameters().size(); i++) {
-//                    System.out.print(method.getParameters().get(i).getName() + " ");
-//                    System.out.print(method.getParameters().get(i).getType() + " ");
-//
-//                }
-//                System.out.println();
-//                System.out.println("    " + method.resolve().getQualifiedSignature());
-//                List<MethodCallExpr> list = getAllSubMethods(method);
-//                for (MethodCallExpr methodCallExpr : list) {
-//                    System.out.println("                " + methodCallExpr.getScope() + "->" + methodCallExpr.getName() + methodCallExpr.getArguments().size());
-//                    System.out.println("                " + methodCallExpr.resolve().getQualifiedSignature());
-//                    System.out.println("                    "+ methodCallExpr.resolve().getName());
-//                    System.out.println("                    "+ methodCallExpr.resolve().getClassName());
-//                    for (int i = 0; i < methodCallExpr.resolve().getNumberOfParams(); i++) {
-//                        System.out.println("                        "+ methodCallExpr.resolve().getParam(i).getName());
-//                        System.out.println("                        "+ methodCallExpr.resolve().getParam(i).getType());
-//                    }
-//                }
-//            }
-//        }
     }
 
 
-    private void createTreeOfSubMethodsForComponentMethodNode(ComponentMethodNode componentMethodNode) {
-
-        System.out.println("createTreeOfSubMethodsForComponentMethodNode = " + componentMethodNode.getMethodName());
-
-        if (componentMethodNode.getClassComponent().asInterfaceComponent() != null)
-            System.out.println(componentMethodNode.getClassComponent().asInterfaceComponent().getContainerName() + " - " + componentMethodNode.getMethodName());
-        else
-            System.out.println(componentMethodNode.getClassComponent().asClassComponent().getClassName() + " - " + componentMethodNode.getMethodName());
-
+    private void createGraphOfSubMethodsForComponentMethodNode(ComponentMethodNode componentMethodNode) {
         findAndSetSubMethodsForComponentMethodNode(componentMethodNode);
-        componentMethodNode.getSubMethods().forEach(sub -> {
-            if (sub.getClassComponent().asInterfaceComponent() != null) {
-                System.out.println("ISUB = " + sub.getClassComponent().asInterfaceComponent().getContainerName() + " -> " + sub.getMethodName());
-            } else {
-                System.out.println("SUB = " + sub.getClassComponent().asClassComponent().getClassName() + " -> " + sub.getMethodName());
-            }
-        });
+
         componentMethodNode.getSubMethods().forEach(subComponentMethodNode -> {
-            createTreeOfSubMethodsForComponentMethodNode(subComponentMethodNode);
+            createGraphOfSubMethodsForComponentMethodNode(subComponentMethodNode);
         });
 
     }
@@ -381,16 +185,13 @@ public class Analyzer {
         methodClassVisitor.visit(controllerContainer.getClassComponent().asClassComponent().getCompilationUnit(), methodDeclarationArrayList);
 
         methodDeclarationArrayList.forEach(methodDeclaration -> {
-//            System.out.println("\t" + methodDeclaration.asMethodInfoComponent().getMethodName());
-//            System.out.println("\t\tAnnotations:");
-
             // get all annotations for methoDeclaration
             List<AnnotationExpr> annotationExprs = new ArrayList<>();
             VoidVisitor<List<AnnotationExpr>> annotationMethodVisitor = new Visitor.AnnotationMethodVisitor();
             annotationMethodVisitor.visit(methodDeclaration, annotationExprs);
 
             annotationLoop:
-            for (AnnotationExpr annotationExpr: annotationExprs){
+            for (AnnotationExpr annotationExpr : annotationExprs) {
                 String annName = annotationExpr.getNameAsString();
                 // for  specific methodDeclaration in annotation such as @PostMapping
                 if (CRITICAL_MAPPING_SET.contains(annName)) {
@@ -401,7 +202,7 @@ public class Analyzer {
                 else if (annName.equals(REQUEST_MAPPING)) {
                     for (MemberValuePair pair : annotationExpr.toNormalAnnotationExpr().orElse(new NormalAnnotationExpr()).getPairs()) {
                         if (pair.getName().asString().equals(METHOD_STRING) && CRITICAL_REQUEST_METHOD_SET.contains(pair.getValue().toString())) {
-                            criticalMethods.add(new ComponentMethodNode(methodDeclaration, methodDeclaration.getNameAsString(),controllerContainer.getClassComponent(), false));
+                            criticalMethods.add(new ComponentMethodNode(methodDeclaration, methodDeclaration.getNameAsString(), controllerContainer.getClassComponent(), false));
                             break annotationLoop;
                         }
                     }
@@ -412,35 +213,81 @@ public class Analyzer {
     }
 
 
-
     /**
      * for each critical method traverse through all parents and check if final endpoint has at least some role from set of roles of critical method
      * if not add comment to method that not contain proper security annotation role(s)
      */
-    private void traverseCriticalMethods(){
-
+    private void traverseCriticalMethods() {
         componentMethodNodeOfTreeSet.stream()
                 .filter(ComponentMethodNode::isCriticalMethod)
-                .forEach(componentMethodNode -> {
-                    componentMethodNode.getParentComponentMethodNodeList().forEach(parent -> findInconsistencyOfParentsMethod(componentMethodNode.getRoles(), parent));
-
-                });
+                .filter(componentMethodNode -> !componentMethodNode.getParentSecurityAnnotationMap().isEmpty())
+                .forEach(componentMethodNode -> componentMethodNode.getParentComponentMethodNodeList()
+                        .forEach(parent -> findInconsistencyOfParentsMethod(componentMethodNode.getParentSecurityAnnotationMap(), parent)));
     }
 
     /**
      *
-     * @param roles
-     * @param componentParentMethodNode
      */
-    private void findInconsistencyOfParentsMethod(Set<String> roles, ComponentMethodNode componentParentMethodNode){
-        Set<String> parentRoles = getRolesFromSecurityAnnotationsMethodDeclaration(componentParentMethodNode.getMethodDeclaration());
+    private void findInconsistencyOfParentsMethod(Map<String, SecurityAnnotation> securityAnnotationMap, ComponentMethodNode componentMethodNode) {
+        for (Map.Entry<String, SecurityAnnotation> stringSecurityAnnotationEntry : componentMethodNode.getSecurityAnnotationMap().entrySet()) {
+            // componentMethodNode contains at least one security annotation for this path
+            if (securityAnnotationMap.containsKey(stringSecurityAnnotationEntry.getKey())) {
+                return;
+            }
+        }
 
+        // component method node does not have parent node and it is not used any security annotation
+        // than add comment to this method declaration about security inconsistency
+        // and suggest annotation that will fix it
+        if (componentMethodNode.getParentComponentMethodNodeList().isEmpty()) {
+            for (Map.Entry<String, SecurityAnnotation> entry : securityAnnotationMap.entrySet()) {
+                componentMethodNode.addSecurityAnnotationSuggestion(entry.getValue());
+            }
+            inconsistentComponentMethodMap.add(componentMethodNode);
+        }
 
+        componentMethodNode.getParentComponentMethodNodeList().forEach(parent -> findInconsistencyOfParentsMethod(securityAnnotationMap, parent));
     }
 
+    /**
+     * for each inconsistent component method create comment and add to compilation unit
+     * and for each compilation unit save it to file
+     */
+    private void saveSuggestedAnnotationsToFile() {
+        inconsistentComponentMethodMap.forEach(componentMethodNode -> {
+
+            StringBuilder comment = new StringBuilder();
+            comment.append("\n")
+                    .append("\tTODO - SecurityAnalyzer found potentially security inconsistency\n")
+                    .append("\tSome suggestions to repair it:\n");
+            for (Map.Entry<String, SecurityAnnotation> entry : componentMethodNode.getSecurityAnnotationSuggestionMap().entrySet()) {
+                comment.append("\t")
+                        .append(entry.getKey())
+                        .append(" // from ")
+                        .append(getComponentName(entry.getValue().getParentNode().getClassComponent()))
+                        .append(".")
+                        .append(entry.getValue().getParentNode().getMethodName())
+                        .append("\n");
+            }
+            comment.append("\t");
+            addCommentToCompilationUnit(componentMethodNode.getClassComponent(), componentMethodNode.getMethodName(), new BlockComment(comment.toString()));
+        });
 
 
+        inconsistentComponentMethodMap.stream().filter(distinctByKey(p -> getComponentName(p.getClassComponent()))).forEach(componentMethodNode -> {
+            CompilationUnit compilationUnit;
+            if (componentMethodNode.getClassComponent().asClassComponent() != null)
+                compilationUnit = componentMethodNode.getClassComponent().asClassComponent().getCompilationUnit();
+            else
+                compilationUnit = componentMethodNode.getClassComponent().asInterfaceComponent().getCompilationUnit();
+            try {
+                saveCompilationUnitToFile(componentMethodNode.getClassComponent().getPath(), compilationUnit);
+            } catch (IOException e) {
 
+                e.printStackTrace();
+            }
+        });
+    }
 
 
     /**
@@ -452,36 +299,34 @@ public class Analyzer {
     private void findAndSetSubMethodsForComponentMethodNode(ComponentMethodNode componentMethodNode) {
         List<ComponentMethodNode> subComponentMethodNodeList = new ArrayList<>();
         List<MethodCallExpr> list = getAllSubMethods(componentMethodNode.getMethodDeclaration());
-        System.out.println("LIST = " + list.size());
         for (MethodCallExpr methodCallExpr : list) {
-            System.out.println(methodCallExpr.getName());
             // javaSymbolSolver is successful - method was found
             try {
                 methodCallExpr.resolve();
+                ComponentMethodNode componentSubMethodNode = findProperClassComponentFromSubMethod(componentMethodNode, methodCallExpr);
+                if (componentSubMethodNode != null) {
+                    subComponentMethodNodeList.add(componentSubMethodNode);
+                }
             } catch (Exception e) {
-                // todo zkusit sparovat repository field variable s metodou expr
-
-                // this methodExpr is has to be critical
+                // JavaSymboler did not resolve this methodExpr - do it manually
+                // interested only in critical methodsExpr - potentially repository critical method (such as save, delete...)
                 if (CRITICAL_REPOSITORY_METHOD_SET.contains(methodCallExpr.getName().asString()) && componentMethodNode.getClassComponent().asClassComponent() != null && methodCallExpr.getScope().isPresent()) {
                     for (FieldComponent fieldComponent : componentMethodNode.getClassComponent().asClassComponent().getFieldComponents()) {
-//                        System.out.println(fieldComponent.getFieldName() + " - " + fieldComponent.getType());
-                        // metoda pochazi z interface z teto field variable
-                        // najit tuto tridu z analysisContext a zkontrolovat ze ma anotaci @Repository
+                        // methodExpr is method of this field variable
+                        // find this classComponent from analysisContext and check that it has @Repository annotation
                         if (fieldComponent.getFieldName().equals(methodCallExpr.getScope().get().toString())) {
                             for (Component searchComponent : analysisContext.getClassesAndInterfaces()) {
                                 if (searchComponent.asInterfaceComponent() != null) {
-                                    // interface z tridni promenne se shoduji -> hledane interface je nalezene
-//                                    System.out.println(searchComponent.asInterfaceComponent().getContainerName() + " vs. " +fieldComponent.getType());
+                                    // interfaceComponent is equal from field variable
                                     if (searchComponent.asInterfaceComponent().getContainerName().equals(fieldComponent.getType())) {
-                                        // zjistit jestli nalezene interface ma tridni anotaci @repository
-                                        System.out.println("QQQQQQ " + searchComponent.asInterfaceComponent().getContainerName());
+                                        // find out if interfaceComponent has class annotation @Repository
                                         for (Component annotation : searchComponent.asInterfaceComponent().getAnnotations()) {
-                                            System.out.println(annotation.asAnnotationComponent().getAsString());
-                                            // this interface component has annotation @Repository
+                                            // interfaceComponent has annotation @Repository
                                             if (annotation.asAnnotationComponent().getAsString().equals(REPOSITORY_ANNOTATION)) {
-                                                ComponentMethodNode componentSubMethodNode = createComponentMethodNode(null, methodCallExpr.getName().asString(), searchComponent, componentMethodNode, isMethodCritical(methodCallExpr.getName().asString(), searchComponent));
+                                                ComponentMethodNode componentSubMethodNode = createComponentMethodNode(null,
+                                                        methodCallExpr.getName().asString(), searchComponent, componentMethodNode,
+                                                        isMethodCritical(methodCallExpr.getName().asString(), searchComponent));
                                                 subComponentMethodNodeList.add(componentSubMethodNode);
-
                                             }
                                         }
                                     }
@@ -490,21 +335,8 @@ public class Analyzer {
                         }
                     }
                 }
-                System.out.print("EXCEPTION FOR METHOD: " + methodCallExpr.getNameAsString() + " - ");
-                if (methodCallExpr.getScope().isPresent()) {
-                    System.out.println(" - " + methodCallExpr.getScope().get());
-                } else {
-                    System.out.println(" - no scope");
-                }
-                //
-                continue;
             }
-            ComponentMethodNode componentSubMethodNode = findProperClassComponentFromSubMethod(componentMethodNode, methodCallExpr);
-            if (componentSubMethodNode != null) {
-                subComponentMethodNodeList.add(componentSubMethodNode);
-            } else {
-                System.out.println(" NULLLLLLLLLLLLLLL");
-            }
+
         }
         componentMethodNode.setSubMethods(subComponentMethodNodeList);
     }
@@ -518,17 +350,13 @@ public class Analyzer {
      */
     private ComponentMethodNode findProperClassComponentFromSubMethod(ComponentMethodNode parent, MethodCallExpr
             methodCallExpr) {
-        System.out.println("findProperClassComponentFromSubMethod = " + methodCallExpr.getNameAsString());
         for (Component component : analysisContext.getClassesAndInterfaces()) {
             CompilationUnit cu;
             if (component.asInterfaceComponent() != null) {
                 cu = component.asInterfaceComponent().getCompilationUnit();
-//                System.out.println("INTERFACE = " + component.asInterfaceComponent().getContainerName());
             } else {
                 cu = component.asClassComponent().getCompilationUnit();
-//                System.out.println("CLASS = " + component.asClassComponent().getContainerName());
             }
-
 
             // get all methods
             List<MethodDeclaration> methodDeclarationArrayList = new ArrayList<>();
@@ -538,27 +366,18 @@ public class Analyzer {
             // for each method try that match with methoCallExpr
             for (MethodDeclaration methodDeclaration : methodDeclarationArrayList) {
                 try {
-//                    System.out.println(methodDeclaration.resolve().getQualifiedSignature() + " vs. " + methodCallExpr.resolve().getQualifiedSignature());
 
                     if (methodDeclaration.resolve().getQualifiedSignature().equals(methodCallExpr.resolve().getQualifiedSignature())) {
-                        System.out.println("FOUND");
                         // if component is Interface component find its implementation
                         if (component.asInterfaceComponent() != null) {
-                            System.out.print("INTERFACE");
-                            ComponentMethodNode componentMethodNode = createComponentMethodNodeFomInterfaceComponent(methodDeclaration, component, parent);
-                            System.out.println(componentMethodNode);
-                            return componentMethodNode;
+                            return createComponentMethodNodeFomInterfaceComponent(methodDeclaration, component, parent);
                         }
-                        System.out.println("CLASSSSS");
                         return createComponentMethodNode(methodDeclaration, methodDeclaration.getNameAsString(), component, parent, isMethodCritical(methodDeclaration.getNameAsString(), component));
                     }
                 } catch (UnsolvedSymbolException e) {
-//                    System.out.println(e.toString());
+                    logger.warn("UnsolvedSymbolException " + methodDeclaration.getNameAsString() + " was not solved by JavaSymboler.");
                 }
-
-
             }
-
         }
         return null;
     }
@@ -572,18 +391,10 @@ public class Analyzer {
      */
     private List<MethodCallExpr> getAllSubMethods(MethodDeclaration methodDeclaration) {
         List<MethodCallExpr> methodCallExprList = new ArrayList<>();
-//        List<MethodCallExpr> methodCallExprListResult = new ArrayList<>();
-//
         if (methodDeclaration == null)
             return methodCallExprList;
 
         methodDeclaration.accept(new Visitor.MethodCallVisitor(), methodCallExprList);
-//        // for each sub method find its proper class component and called method component
-//        for (MethodCallExpr methodCallExpr : methodCallExprList) {
-//            if (!methodCallExpr.getScope().get().toString().contains("LOGGER")) {
-//                methodCallExprListResult.add(methodCallExpr);
-//            }
-//        }
         return methodCallExprList;
     }
 
@@ -595,12 +406,10 @@ public class Analyzer {
             String annName = ann.asAnnotationComponent().getAsString();
             // for  specific method in annotation such as @PostMapping
             if (CRITICAL_MAPPING_SET.contains(annName)) {
-//                    System.out.println("\t\tCRITICAL ANN");
                 return true;
             }
             // for @RequestMapping - specific method as parameter
             else if (annName.equals(REQUEST_MAPPING)) {
-//                    System.out.print("\t\tREQUEST MAP ANN = ");
                 for (AnnotationValuePair pair : ann.asAnnotationComponent().getAnnotationValuePairList()) {
                     if (pair.getKey().equals(METHOD_STRING) && CRITICAL_REQUEST_METHOD_SET.contains(pair.getValue())) {
                         return true;
@@ -624,13 +433,11 @@ public class Analyzer {
             Component classComponent = analysisContext.getClassByName(className);
 
             // get all class annotations
-//            System.out.println(classComponent.asClassComponent().getClassName());
             List<AnnotationExpr> annotationClassList = new ArrayList<>();
             VoidVisitor<List<AnnotationExpr>> annotationClassVisitor = new ContainerClassCU.AnnotationClassVisitor();
             annotationClassVisitor.visit(classComponent.asClassComponent().getCompilationUnit(), annotationClassList);
 
             for (AnnotationExpr ann : annotationClassList) {
-//                System.out.println("\t" + ann.getName());
                 if (ann.getName().asString().contains("Controller")) {
                     controllerList.add(new ControllerContainer(classComponent));
                     break;
@@ -644,55 +451,32 @@ public class Analyzer {
 
     /**
      * set list of field variables of class component
-     * change interace component into class component of its implemetation
+     * change interface component into class component of its implementation if exists
      * class component field variables remain same
      *
      * @param controllerContainer
      */
     private void setClassContainerFromField(ControllerContainer controllerContainer) {
-
-//        analysisContext.getClasses().forEach(cl -> {
-//            System.out.println(cl.getClassName());
-//        });
-//        System.out.println();
-//        System.out.println();
-//        System.out.println();
-//
-//        System.out.println("TRY SUBMETHODS");
-        System.out.println("setClassContainerFromField");
-        System.out.println(controllerContainer.getClassComponent().asClassComponent().getClassName());
-        System.out.println("    FIELDCOMPONENTS");
-
         List<Component> classComponetsFromFieldList = new ArrayList<>();
         for (FieldComponent fieldComponent : controllerContainer.getClassComponent().asClassComponent().getFieldComponents()) {
-            System.out.println("\t" + fieldComponent);
-            // get class component either as class component or class which implements interface name
             Component par = getClassComponentFromClassOrInterfaceByName(fieldComponent.getType());
             if (par != null) {
                 classComponetsFromFieldList.add(par);
-//                par.asClassComponent().getMethods().forEach(m -> {
-//                    System.out.println("\t\t\t" + m.asMethodInfoComponent().getId() + m.asMethodInfoComponent().getMethodName());
-//                });
             }
         }
         controllerContainer.setClassComponentsFromFieldsList(classComponetsFromFieldList);
-        System.out.println("SETED field components");
-        controllerContainer.getClassComponentsFromFieldsList().forEach(component -> {
-            System.out.println("    " + component.asClassComponent().getClassName());
-        });
-
     }
 
 
     /**
-     * add comment to specific method of Class component
+     * add comment to specific method of component
      *
      * @param component
      * @param methodName
      * @param comment
      * @throws IOException
      */
-    private void addComment(Component component, String methodName, Comment comment) throws IOException {
+    private void addCommentToCompilationUnit(Component component, String methodName, Comment comment) {
         // find all methodDeclarations for class component
         List<MethodDeclaration> methodDeclarationArrayList = new ArrayList<>();
         VoidVisitor<List<MethodDeclaration>> methodClassVisitor = new Visitor.MethodClassVisitor();
@@ -700,13 +484,21 @@ public class Analyzer {
 
         // find proper method to add comment
         methodDeclarationArrayList.forEach(method -> {
-            System.out.println(method.getNameAsString());
             if (method.getNameAsString().equals(methodName))
                 method.setComment(comment);
-
         });
+    }
 
-        fileHandler.saveCompilationUnitToFile(component.getPath(), component.asClassComponent().getCompilationUnit());
+
+    /**
+     * save compilationUnit to file based on path
+     *
+     * @param filePath
+     * @param compilationUnit
+     * @throws IOException
+     */
+    private void saveCompilationUnitToFile(String filePath, CompilationUnit compilationUnit) throws IOException {
+        fileHandler.saveCompilationUnitToFile(filePath, compilationUnit);
     }
 
 
@@ -728,37 +520,28 @@ public class Analyzer {
                 }
             }
         }
-
         return null;
     }
 
     /**
      * for interface component find its implementation and set properly methodDeclaration and class component
+     * if its implementation is not found return interfaceComponent
      *
      * @param component
      * @return
      */
     private ComponentMethodNode createComponentMethodNodeFomInterfaceComponent(MethodDeclaration methodDeclaration,
                                                                                Component component, ComponentMethodNode parent) {
-        System.out.println("createComponentMethodNodeFomInterfaceComponent");
         Component classComponent = findClassComponentImplementedInterface(component);
-
-        System.out.println("COKOLIV");
-        // when implementation for interface component not found -> return this interface component
         if (classComponent == null) {
-            System.out.println("classs is null");
             return createComponentMethodNode(methodDeclaration, methodDeclaration.getNameAsString(), component, parent, isMethodCritical(methodDeclaration.getNameAsString(), component));
         }
-
-        System.out.println(classComponent.asClassComponent().getClassName());
 
         List<MethodDeclaration> methodDeclarationArrayList = new ArrayList<>();
         VoidVisitor<List<MethodDeclaration>> methodClassVisitor = new Visitor.MethodClassVisitor();
         methodClassVisitor.visit(classComponent.asClassComponent().getCompilationUnit(), methodDeclarationArrayList);
 
-        System.out.println("list of size " + methodDeclarationArrayList.size());
         String className = classComponent.asClassComponent().getClassName();
-        // find proper method to add comment
         for (MethodDeclaration method : methodDeclarationArrayList) {
             String methodFullName = method.resolve().getQualifiedSignature();
             String methodNameWithParams = methodFullName.substring(methodFullName.indexOf(className) + className.length());
@@ -783,7 +566,6 @@ public class Analyzer {
             VoidVisitor<List<String>> methodClassVisitor = new Visitor.ImplementsClassVisitor();
             methodClassVisitor.visit(classComponent.getCompilationUnit(), implementsList);
 
-//            System.out.println("IMPLEMENTS FOUND OF CLASS " + classComponent.getClassName());
             for (String impl : implementsList) {
                 if (impl.equals(interfaceComponent.asInterfaceComponent().getContainerName())) {
                     return classComponent;
@@ -796,63 +578,35 @@ public class Analyzer {
 
     /**
      * check if methodDeclaration has security annotation(s) and parse from that role names
+     *
      * @param methodDeclaration
      * @return
      */
-    private Set<String> getRolesFromSecurityAnnotationsMethodDeclaration(MethodDeclaration methodDeclaration) {
+    private Map<String, SecurityAnnotation> getRolesFromSecurityAnnotationsMethodDeclaration(MethodDeclaration methodDeclaration, ComponentMethodNode componentMethodNode) {
         if (methodDeclaration == null)
-            return new HashSet<>();
+            return new HashMap<>();
 
-//        System.out.println("METHOD DECLARATION = " + methodDeclaration.getNameAsString());
-
-        Set<String> roles = new HashSet<>();
+        Map<String, SecurityAnnotation> roles = new HashMap<>();
         List<AnnotationExpr> annotationExprList = new ArrayList<>();
         VoidVisitor<List<AnnotationExpr>> annotationClassVisitor = new Visitor.AnnotationMethodVisitor();
         annotationClassVisitor.visit(methodDeclaration, annotationExprList);
         for (AnnotationExpr annotationExpr : annotationExprList) {
-//            System.out.println("ANN = " + annotationExpr.getNameAsString());
 
             if (annotationExpr.getNameAsString().equals(SECURITY_ANNOTATION_SECURED) || annotationExpr.getNameAsString().equals(SECURITY_ANNOTATION_ROLES_ALLOWED)) {
                 if (annotationExpr.isSingleMemberAnnotationExpr()) {
-//                    System.out.println("Single = " + annotationExpr.asSingleMemberAnnotationExpr().getName() + " - " + annotationExpr.asSingleMemberAnnotationExpr().getMemberValue());
-//                    String[] list = annotationExpr.asSingleMemberAnnotationExpr().getMemberValue().toString().split(",");
-//                    for (int i = 0; i < list.length; i++) {
-//                        System.out.println(list[i]);
-//                        System.out.println(list[i].substring(list[i].indexOf("\"") + 1, list[i].lastIndexOf("\"")));
-//                        System.out.println(list[i].replaceAll("[^A-Za-z_]", ""));
-//                    }
-
                     Set<String> rolesOfAnnotation = Arrays.stream(annotationExpr.asSingleMemberAnnotationExpr().getMemberValue().toString().split(","))
                             .map(chunk -> chunk.replaceAll("[^A-Za-z_]", "")).collect(Collectors.toSet());
-                    roles.addAll(rolesOfAnnotation);
-//                    roles.forEach(role -> System.out.println(role));
+                    roles.put(annotationExpr.toString(), new SecurityAnnotation(annotationExpr.toString(), rolesOfAnnotation, componentMethodNode));
                 }
             } else if (annotationExpr.getNameAsString().equals(SECURITY_ANNOTATION_PREAUTHORIZE) || annotationExpr.getNameAsString().equals(SECURITY_ANNOTATION_POSTAUTHORIZE)) {
-//                System.out.println("PRE OR POST AUTHORIZE");
                 Set<String> rolesOfAnnotation = Arrays.stream(annotationExpr.asSingleMemberAnnotationExpr().getMemberValue().toString().split("or|and"))
                         .filter(chunk -> chunk.contains(SECURITY_HAS_ROLE))
                         .map(chunk -> chunk.substring(chunk.indexOf(SECURITY_HAS_ROLE) + SECURITY_HAS_ROLE.length()))
                         .map(chunk -> chunk.replaceAll("[^A-Za-z_]", "")).collect(Collectors.toSet());
-//                roles.forEach(role -> System.out.println(role));
-                roles.addAll(rolesOfAnnotation);
+                roles.put(annotationExpr.toString(), new SecurityAnnotation(annotationExpr.toString(), rolesOfAnnotation, componentMethodNode));
 
 
             }
-
-//            if (annotationExpr.isMarkerAnnotationExpr()) {
-//                System.out.println("Marker = " + annotationExpr.asMarkerAnnotationExpr().getName());
-//            } else if (annotationExpr.isSingleMemberAnnotationExpr()) {
-//                System.out.println("Single = " + annotationExpr.asSingleMemberAnnotationExpr().getName() + " - " + annotationExpr.asSingleMemberAnnotationExpr().getMemberValue());
-//            } else if (annotationExpr.isNormalAnnotationExpr()) {
-//                System.out.print("Normal = " + annotationExpr.asNormalAnnotationExpr().getName());
-//                annotationExpr.asNormalAnnotationExpr().getPairs().forEach(pair -> {
-//                    System.out.print(pair.getName() + "->" + pair.getValue().toString() + ", ");
-//                });
-//                System.out.println();
-//            } else {
-//                System.out.print("???? = " + annotationExpr.isAnnotationExpr());
-//
-//            }
         }
         return roles;
 
@@ -862,6 +616,7 @@ public class Analyzer {
     /**
      * create new componentMethodNode or find already created one and add parent component
      * also find and set roles
+     *
      * @param methodDeclaration
      * @param methodName
      * @param component
@@ -878,7 +633,7 @@ public class Analyzer {
                     componentMethodNode.addParentClassComponent(parentComponent);
                     // add all roles of parent
                     if (parentComponent != null) {
-                        parentComponent.getRoles().forEach(componentMethodNode::addRole);
+                        parentComponent.getParentSecurityAnnotationMap().values().forEach(componentMethodNode::addParentSecurityAnnotation);
                     }
                     return componentMethodNode;
                 }
@@ -887,21 +642,21 @@ public class Analyzer {
         ComponentMethodNode componentMethodNode = new ComponentMethodNode(methodDeclaration, methodName, component, parentComponent, critical);
 
         // find all Security annotations
-        Set<String> roles = getRolesFromSecurityAnnotationsMethodDeclaration(methodDeclaration);
-        componentMethodNode.setRoles(roles);
+        Map<String, SecurityAnnotation> roles = getRolesFromSecurityAnnotationsMethodDeclaration(methodDeclaration, componentMethodNode);
+        componentMethodNode.setParentSecurityAnnotationMap(roles);
+        componentMethodNode.setSecurityAnnotationMap(roles);
         // add all roles of parent
         if (parentComponent != null) {
-            parentComponent.getRoles().forEach(componentMethodNode::addRole);
+            parentComponent.getParentSecurityAnnotationMap().values().forEach(componentMethodNode::addParentSecurityAnnotation);
         }
-
         componentMethodNodeOfTreeSet.add(componentMethodNode);
-
         return componentMethodNode;
     }
 
 
     /**
      * method is critical if class/interface has repository annotation and method is critical (save or delete methods in db)
+     *
      * @param methodName
      * @param component
      * @return
@@ -936,6 +691,7 @@ public class Analyzer {
 
     /**
      * get name for interface or class component
+     *
      * @param component
      * @return
      */
@@ -948,19 +704,17 @@ public class Analyzer {
     }
 
 
+
+    private static <T> Predicate<T> distinctByKey(Function<? super T, Object> keyExtractor) {
+        Map<Object, Boolean> map = new ConcurrentHashMap<>();
+        return t -> map.putIfAbsent(keyExtractor.apply(t), Boolean.TRUE) == null;
+    }
+
+
     private void printAllClassAnnotations() {
-        System.out.println("printAllClassAnnotations(){");
         containerClassCUList.forEach(cu -> {
             for (AnnotationExpr annotationExpr : cu.getClassAnnotations()) {
                 System.out.println("\t" + annotationExpr.getName());
-//                if (annotationExpr.getName().asString().contains("Controller")){
-//                    System.out.println(cu.getNameClass() + " = ");
-//                    cu.getMethodDeclarations().forEach(method -> {
-//                        System.out.println("\t" + method.getNameAsString());
-//                    });
-//
-//                    break;
-//                }
             }
 
         });
@@ -998,13 +752,13 @@ public class Analyzer {
             System.out.print(getComponentName(componentMethodNode.getClassComponent()) + "." + componentMethodNode.getMethodName());
             System.out.print("[" + componentMethodNode.isCriticalMethod() + "] ");
             System.out.print("{");
-            componentMethodNode.getRoles().forEach(role -> System.out.print(role + ", "));
+            componentMethodNode.getParentSecurityAnnotationMap().keySet().forEach(role -> System.out.print(role + ", "));
             System.out.println("}");
         } else {
             System.out.print(componentMethodNode.getMethodDeclaration().resolve().getQualifiedSignature());
             System.out.print("[" + componentMethodNode.isCriticalMethod() + "]");
             System.out.print("{");
-            componentMethodNode.getRoles().forEach(role -> System.out.print(role + ", "));
+            componentMethodNode.getParentSecurityAnnotationMap().keySet().forEach(role -> System.out.print(role + ", "));
             System.out.println("}");
         }
         for (ComponentMethodNode subComponentMethod : componentMethodNode.getSubMethods()) {

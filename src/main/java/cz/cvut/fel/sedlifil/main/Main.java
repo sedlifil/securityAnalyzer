@@ -11,14 +11,18 @@ public class Main {
 
     public static void main(String[] args) {
         String filePath = "";
+        String rootPackagePath = "";
 
-        if(args.length == 0) {
-            System.out.println("One parameter needed - path to directory src of analyzing application.");
+        if(args.length < 2) {
+            System.out.println("Two parameters needed:");
+            System.out.println("First - path to directory src of analyzing application.");
+            System.out.println("Second - parent directory path of package name.");
             System.exit(1);
         }
 
-        if (args.length == 1) {
+        if (args.length == 2) {
             filePath = args[0];
+            rootPackagePath = args[1];
         }
 
 
@@ -27,7 +31,7 @@ public class Main {
 
         Analyzer analyzer = null;
         try {
-            analyzer = new Analyzer(fileHandler, filePath);
+            analyzer = new Analyzer(fileHandler, filePath, rootPackagePath);
         } catch (FileNotFoundException e) {
             e.printStackTrace();
         }
